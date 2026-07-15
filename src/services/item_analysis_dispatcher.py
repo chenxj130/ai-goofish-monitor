@@ -93,6 +93,8 @@ class ItemAnalysisDispatcher:
     async def _build_analysis_result(self, job: ItemAnalysisJob, record: dict) -> dict:
         if job.decision_mode == "keyword":
             return self._build_keyword_result(job, record)
+        if job.decision_mode == "ai_keyword":
+            return await self._build_ai_keyword_result(job, record)
         if self._skip_ai_analysis:
             return self._build_skip_ai_result()
         return await self._run_ai_analysis(job, record)
@@ -100,6 +102,32 @@ class ItemAnalysisDispatcher:
     def _build_keyword_result(self, job: ItemAnalysisJob, record: dict) -> dict:
         search_text = build_search_text(record)
         return evaluate_keyword_rules(list(job.keyword_rules), search_text)
+
+    async def _build_ai_keyword_result(self, job: ItemAnalysisJob, record: dict) -> dict:
+        """AI + 关键词双重门槛：先跑 AI 分析，再要求命中关键词才推荐/通知。"""
+        ai_result = await self._run_ai_analysis(job, record)
+        search_text = build_search_text(record)
+        kw_result = evaluate_keyword_rules(list(job.keyword_rules), search_text)
+        hit_count = kw_result.get("keyword_hit_count", 0)
+        matched = kw_result.get("matched_keywords", [])
+        ai_recommended = bool(ai_result.get("is_recommended"))
+
+        is_recommended = ai_recommended and hit_count > 0
+        if is_recommended:
+            reason = f"AI推荐 且 命中关键词：{', '.join(matched)}"
+        elif not ai_recommended:
+            reason = f"AI未推荐：{ai_result.get('reason', '')}"
+        else:
+            reason = "AI推荐，但未命中任何关键词，不通知。"
+
+        merged = dict(ai_result)
+        merged["analysis_source"] = "ai" if ai_result.get("analysis_source") != "keyword" else "ai_keyword"
+        merged["is_recommended"] = is_recommended
+        merged["keyword_hit_count"] = hit_count
+        merged["reason"] = reason
+        if matched:
+            merged["matched_keywords"] = matched
+        return merged
 
     def _build_skip_ai_result(self) -> dict:
         return {

@@ -455,7 +455,7 @@ async def scrape_xianyu(task_config: dict, debug_limit: int = 0):
     ai_prompt_text = task_config.get("ai_prompt_text", "")
     analyze_images = _should_analyze_images(task_config)
     decision_mode = str(task_config.get("decision_mode", "ai")).strip().lower()
-    if decision_mode not in {"ai", "keyword"}:
+    if decision_mode not in {"ai", "keyword", "ai_keyword"}:
         decision_mode = "ai"
     keyword_rules = task_config.get("keyword_rules") or []
     free_shipping = task_config.get("free_shipping", False)
@@ -580,10 +580,15 @@ async def scrape_xianyu(task_config: dict, debug_limit: int = 0):
                 ):
                     print(f"检测到增强浏览器快照，应用环境参数: {state_file}")
                     storage_state_arg = {"cookies": snapshot_data.get("cookies", [])}
-                    context_kwargs.update(_build_context_overrides(snapshot_data))
-                    extra_headers = _build_extra_headers(snapshot_data.get("headers"))
-                    if extra_headers:
-                        context_kwargs["extra_http_headers"] = extra_headers
+                    # [修复] 不叠加 env/headers 指纹覆盖：快照里的 timezone(Asia/Taipei)、
+                    # UA(Mac)、sec-ch-ua 等与本机/代理出口(美国)/登录地(大陆)不一致，
+                    # 会触发闲鱼风控 -> 搜索页返回空白、pc.search 请求被拦、任务 Timeout。
+                    # 实证见 diag_login.py / diag_v2.py(仅cookies变体可正常出数据)。
+                    # 现仅取 cookies，浏览器环境回退到 _default_context_options(上海时区/移动UA)。
+                    # context_kwargs.update(_build_context_overrides(snapshot_data))
+                    # extra_headers = _build_extra_headers(snapshot_data.get("headers"))
+                    # if extra_headers:
+                    #     context_kwargs["extra_http_headers"] = extra_headers
                 else:
                     storage_state_arg = snapshot_data
 

@@ -1,6 +1,8 @@
 # Stage 1: Build the Vue application
 FROM node:22-alpine AS frontend-builder
 WORKDIR /web-ui
+# 使用国内 npm 镜像，避免默认 registry 在大陆网络超时
+ENV npm_config_registry=https://registry.npmmirror.com
 COPY web-ui/package*.json ./
 RUN npm ci
 COPY web-ui/ .
@@ -32,6 +34,10 @@ ENV DEBIAN_FRONTEND=noninteractive \
     TZ=Asia/Shanghai
 
 COPY --from=builder ${VIRTUAL_ENV} ${VIRTUAL_ENV}
+
+# 使用国内镜像下载 Playwright 浏览器，避免官方 CDN 在大陆网络超时
+ARG PLAYWRIGHT_DOWNLOAD_HOST=https://cdn.npmmirror.com/binaries/playwright
+ENV PLAYWRIGHT_DOWNLOAD_HOST=${PLAYWRIGHT_DOWNLOAD_HOST}
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \

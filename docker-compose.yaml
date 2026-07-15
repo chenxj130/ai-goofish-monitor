@@ -2,7 +2,7 @@ services:
   app:
     image: ${APP_IMAGE:-ghcr.io/usagi-org/ai-goofish:latest}
     container_name: ai-goofish-monitor-app
-    pull_policy: always
+    pull_policy: never
     init: true
     ports:
       - "8000:8000"
@@ -20,4 +20,7 @@ services:
       - ./logs:/app/logs
       - ./images:/app/images
       - ./price_history:/app/price_history
+      - ./src:/app/src
+      - ./spider_v2.py:/app/spider_v2.py
     restart: unless-stopped
+    command: bash -c "rm -f /tmp/.X11-unix/X99; Xvfb :99 -ac -screen 0 1280x1024x24 >/dev/null 2>&1 & sleep 2; export DISPLAY=:99; exec python -m src.app"
