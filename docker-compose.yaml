@@ -22,5 +22,8 @@ services:
       - ./price_history:/app/price_history
       - ./src:/app/src
       - ./spider_v2.py:/app/spider_v2.py
+      - ./start_xvfb_guard.sh:/app/start_xvfb_guard.sh:ro
     restart: unless-stopped
-    command: bash -c "rm -f /tmp/.X11-unix/X99; Xvfb :99 -ac -screen 0 1280x1024x24 >/dev/null 2>&1 & sleep 2; export DISPLAY=:99; exec python -m src.app"
+    # Xvfb 保活启动（独立脚本 start_xvfb_guard.sh）
+    #   解决：Xvfb 运行中崩溃 → TargetClosedError → 反复"启动任务失败"
+    command: ["bash", "/app/start_xvfb_guard.sh"]
