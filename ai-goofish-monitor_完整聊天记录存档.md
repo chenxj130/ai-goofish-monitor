@@ -309,7 +309,7 @@ Mac mini:        无 Login required 重定向 → 解析 30 商品 → 发现新
 
 > 请对完整聊天记录梳理和存档做进一步优化，优化格式内容详见附件.md 文件 @"/Users/zhaoshuixian/.qwenworkcn/workspace/mskyrd4tuh3ap6m4/outputs/scys.com诊断修复-完整聊天记录存档.md" 形式，要求把用户发出指令提示词做完整 1:1 复刻呈现，以方便后期做对话提示词细节再优化。针对完整聊天记录优化后的存档方式做全局应用设置。
 
-## 轮次 17 ｜ 助手（当前）
+## 轮次 17 ｜ 助手
 
 ### 阶段 A：格式对齐优化
 
@@ -327,6 +327,125 @@ Mac mini:        无 Login required 重定向 → 解析 30 商品 → 发现新
 
 ---
 
+## 轮次 18 ｜ 用户
+
+（附截图：任务管理页，顶部红色弹窗「启动任务失败 / 出错了!启动任务失败」，任务列表包含商用智能炒菜机、天眼查VIP、Mac mini M2芯片、香港tima国际音乐大赏）
+
+> @image#1:Clipboard_Screenshot.png
+
+## 轮次 18 ｜ 助手
+
+### 阶段 A：远程诊断
+
+```
+当前时间: 2026-08-21 23:03
+state/aicaic-1.json mtime: Aug  9 10:37  （已 12 天）
+Xvfb socket /tmp/.X11-unix/X99: 存在 ✅
+```
+
+所有任务日志均报同一错误：
+
+```
+检测到登录失效/重定向: Login required: redirected to https://passport.goofish.com/mini_login.htm?...
+(cookies/state likely expired)
+```
+
+FailureGuard 状态：
+- `香港tima国际音乐大赏` 连续失败 3/3，熔断至 2026-08-22T22:54:20
+- `Mac mini M2芯片 16G/32G+256` 1/3
+- `天眼查VIP` 1/3
+- `商用智能炒菜机 炒菜机` 0/3
+
+### 阶段 B：结论
+
+根因：**闲鱼登录态过期**（8/9 捕获，8/21 已 12 天）。Xvfb 正常、代码正常，只需重新跑 `capture_login.py`（v7）并清熔断。
+
+### 阶段 C：下一步动作
+
+要求用户运行：
+
+```bash
+cd /Users/zhaoshuixian/Documents/GitHub/ai-goofish-monitor && /Users/zhaoshuixian/.workbuddy/binaries/python/versions/3.13.12/bin/python3 capture_login.py
+```
+
+登录成功后回复「登录好了」，再执行清熔断 + 重启 + 验证。
+
+---
+
+## 轮次 19 ｜ 用户
+
+（附截图：任务管理页，与轮次 18 相同报错「启动任务失败」）
+
+> @image#1:Clipboard_Screenshot.png
+
+## 轮次 19 ｜ 助手
+
+### 阶段 A：确认用户已重捕获登录态
+
+```
+state/aicaic-1.json mtime: Aug 22 07:33  ✅ 已更新
+容器内同步: Aug 22 07:33  ✅
+cookie 数量: 22 个，关键标识 cookie2/_m_h5_tk/_tb_token_/XSRF-TOKEN/t/unb 全在
+```
+
+但 UI 仍报错。查容器主进程日志发现：
+
+```
+[FailureGuard] 跳过启动任务 '香港tima国际音乐大赏'，已暂停重试 (连续失败 3/3)
+POST /api/tasks/start/3 HTTP/1.1" 500 Internal Server Error
+```
+
+**真正原因**：用户已更新登录态，但 `tima` 任务因之前的连续失败已被 FailureGuard 熔断，直接返回 500，所以 UI 弹「启动任务失败」。
+
+### 阶段 B：修复
+
+```bash
+# 1. 清熔断
+rm -f logs/task-failure-guard.json
+
+# 2. 重启容器，让主进程重新加载
+docker restart ai-goofish-monitor-app
+
+# 3. 验证 Xvfb 已就绪
+docker exec ai-goofish-monitor-app ls -la /tmp/.X11-unix/X99
+# 输出: srwxrwxrwx /tmp/.X11-unix/X99 ✅
+```
+
+### 阶段 C：验证两任务
+
+**Mac mini 任务验证**：
+
+```bash
+docker exec -w /app -e DISPLAY=:99 -d ai-goofish-monitor-app bash -c \
+  "python spider_v2.py --task-name 'Mac mini M2芯片 16G/32G+256' > /tmp/verify_macmini_0822.log 2>&1"
+```
+
+结果：
+- 无 `Login required` 重定向 ✅
+- 成功解析到 30 条商品基础信息 ✅
+- 发现新商品，采集卖家信息 ✅
+- `ntfy 通知发送成功` ✅
+
+**炒菜机任务验证**（AI 模式）：
+
+```bash
+docker exec -w /app -e DISPLAY=:99 -d ai-goofish-monitor-app bash -c \
+  "python spider_v2.py --task-name '商用智能炒菜机 炒菜机' > /tmp/verify_caopan_0822.log 2>&1"
+```
+
+结果：
+- 无重定向 ✅
+- 解析到 30 商品 ✅
+- AI 分析正常进行 ✅
+
+### 阶段 D：本轮关键教训
+
+登录态更新后必须**清熔断 + 重启容器**。如果只更新 `state/aicaic-1.json` 而不清熔断，已被熔断的任务仍会直接被 FailureGuard 拒绝，UI 继续报「启动任务失败」。
+
+---
+
+---
+
 ## 经验沉淀（可复用）
 
 1. **Xvfb 保活**：无头浏览器项目必须把虚拟显示器做成守护（崩了自动重启），否则子进程必崩。根治方案 `start_xvfb_guard.sh` + compose `command` 引用脚本。
@@ -338,12 +457,13 @@ Mac mini:        无 Login required 重定向 → 解析 30 商品 → 发现新
 7. **Chrome Profile 占用**：Playwright 不能直连正在运行的 Chrome Profile（SingletonLock），须复制副本或关掉 Chrome。
 8. **cookie 解密**：macOS Chrome cookie 用 Keychain 加密，Python 直接读易失败；让**真实 Chrome 浏览器**自己加载最稳。
 9. **聊天存档格式**：用户指令 1:1 复刻（引用块）+ 轮次结构，便于后期提示词优化（全局规则）。
+10. **登录态更新后必须清熔断 + 重启容器**：只更新 `state/aicaic-1.json` 不够，已被 FailureGuard 熔断的任务会直接返回 500，UI 仍报「启动任务失败」。
 
 ---
 
 ## 待办
 
 - [ ] Cloudflare 公网部署（待注册域名）
-- [ ] 登录态约 7~30 天过期，届时重跑 `python3 capture_login.py`（v7），跑完清熔断 + 重启 + 验证
+- [ ] 登录态约 7~30 天过期，届时重跑 `python3 capture_login.py`（v7），跑完**必须**清熔断 + 重启容器 + 验证
 
 （完）
