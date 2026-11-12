@@ -511,6 +511,125 @@ cd /Users/zhaoshuixian/Documents/GitHub/ai-goofish-monitor && .venv/bin/python c
 
 ---
 
+## 轮次 21 ｜ 用户
+
+> 闲鱼登录好了
+
+## 轮次 21 ｜ 助手
+
+### 阶段 A：先只读核查，发现「登录成功 ≠ 已保存」
+
+用户说登录好了，但直接部署会踩坑，先查三处：
+
+```
+state/aicaic-1.json  →  mtime 2026-08-22 07:33 / 264136 bytes / 22 cookies（未变 ❌）
+容器内 state         →  仍是 Aug 22 07:33（bind mount 同步无问题）
+FailureGuard         →  三个任务 consecutive_failures 全为 0
+Xvfb /tmp/.X11-unix/X99 → 存在 ✅
+```
+
+**结论**：state 文件根本没被改写 → 不能重启、不能跑任务（否则必然 `Login required` 并触发熔断）。
+
+### 阶段 B：定位到脚本卡在 input()
+
+```
+/tmp/goofish_profile_copy            →  13:41 创建（脚本确实跑过）
+副本 Profile 5/Cookies（只读 SQLite） →  13:39:37 写入 unb / sgcookie / csg /
+                                        tracknick / last_u_xianyu_web（登录确实成功 ✅）
+pgrep -fl capture_login.py           →  PID 76465 仍在运行
+副本 Chrome                          →  PID 76500 仍在运行
+```
+
+根因：`capture_login.py` 第 193 行 `input("登录成功后，按 Enter 进入阶段 B...")` 与第 251 行 `input("按 Enter 保存登录态...")` 是**两个阻塞点**；写文件的 `open(STATE_FILE,"w")` 在第 272 行。用户只在浏览器窗口完成了短信登录，没回到终端按 Enter。
+
+### 阶段 C：给用户的操作指引（不擅自操作系统进程）
+
+- 切回运行脚本的终端窗口（`ttys002`）按 Enter；若出现「按 Enter 保存登录态」再按一次
+- 完成标志：终端打印 `✅ 登录态已保存!` + `文件: .../state/aicaic-1.json` + `Cookies: NN 个`
+- 两个禁忌：**别 Ctrl+C**、**别手动关 Chrome 副本窗口**（保存代码在 `context.close()` 之前）
+- 兜底：`/tmp/goofish_profile_copy` 在脚本正常结束前保留新 cookie，可重新加载副本导出，不必重收短信验证码
+
+---
+
+## 轮次 22 ｜ 用户
+
+（贴出完整终端输出，确认已按 Enter 保存成功）
+
+> Last login: Thu Nov 12 13:29:51 on ttys002
+> (base) zhaoshuixian@NARCISSZHAO-MB0 ~ % cd /Users/zhaoshuixian/Documents/GitHub/ai-goofish-monitor && .venv/bin/python capture_login.py
+> ============================================================
+> 闲鱼登录态捕获 v7
+> (桌面 UA 登录 → 自动切 Mobile UA 建 session)
+> ============================================================
+> 输出文件: /Users/zhaoshuixian/Documents/GitHub/ai-goofish-monitor/state/aicaic-1.json
+> · 复制 Profile 5 → /tmp/goofish_profile_copy （排除缓存）...
+> ━━ 阶段 A：桌面端浏览器（用于登录） ━━
+> 正在启动浏览器（桌面端 UA，反爬宽松）...
+> ✅ 浏览器已启动
+> → 打开闲鱼登录页...
+> ✅ 已登录！（URL: https://www.goofish.com/search?q=test）
+> 直接进入阶段 B...
+> ━━ 阶段 B：切换为移动端 UA ━━
+> 正在切换 UA + 视口...
+> → 用移动端 UA 导航到闲鱼搜索页...
+> → 最终 URL: https://www.goofish.com/search?q=Mac%20mini%20M2
+> ✅ 移动端 UA 下未跳转登录页！session 建立成功！
+> ℹ️  未检测到 '新发布'，但仍继续保存
+> 💡 按 Enter 保存登录态...
+> ✅ 登录态已保存!
+> 文件: /Users/zhaoshuixian/Documents/GitHub/ai-goofish-monitor/state/aicaic-1.json
+> 大小: 260,092 bytes
+> Cookies: 29 个
+> 关键标识: ['cookie2', '_m_h5_tk', 'XSRF-TOKEN', 't', '_tb_token_', 'unb']
+> ------------------------------------------------------------
+> 下一步: 告诉我「登录好了」，我会自动部署到容器并验证
+> (base) zhaoshuixian@NARCISSZHAO-MB0 ai-goofish-monitor %
+
+## 轮次 22 ｜ 助手
+
+### 阶段 A：确认新登录态落盘
+
+```
+本地 state/aicaic-1.json  →  2026-11-12 13:50 / 260092 bytes / 29 cookies / 5 origins
+关键标识                  →  cookie2, _m_h5_tk, XSRF-TOKEN, t, _tb_token_, unb（6/6 齐全）
+容器内 state              →  Nov 12 13:50 / 260092 bytes（bind mount 自动同步 ✅）
+pgrep capture_login.py    →  已正常退出 ✅
+DB 任务名                 →  id0 商用智能炒菜机 炒菜机(ai) / id2 Mac mini M2芯片 16G/32G+256(keyword)
+```
+
+### 阶段 B：清熔断 + 重启容器
+
+```bash
+rm -f logs/task-failure-guard.json
+docker restart ai-goofish-monitor-app && sleep 14
+```
+
+验证：Xvfb `X99` socket 于 13:51 重建 ✅；`/login` 与 `/api/tasks` 均 HTTP 200 ✅；启动日志无 error/traceback ✅。
+
+### 阶段 C：双任务回归验证（重点看 Login required）
+
+```bash
+docker exec -w /app -e DISPLAY=:99 -d ai-goofish-monitor-app \
+  bash -c "python spider_v2.py --task-name 'Mac mini M2芯片 16G/32G+256' > /tmp/verify_1112_macmini.log 2>&1"
+docker exec -w /app -e DISPLAY=:99 -d ai-goofish-monitor-app \
+  bash -c "python spider_v2.py --task-name '商用智能炒菜机 炒菜机' > /tmp/verify_1112_caopan.log 2>&1"
+```
+
+| 任务 | 证据 | 重定向计数 |
+|---|---|---|
+| Mac mini | 步骤 0→1→2 全过、`(第 1 页) 成功解析到 30 条商品基础信息`、发现新商品、累计处理 6 个新商品、`ntfy 通知发送成功` | **0** ✅ |
+| 炒菜机（AI） | `账号轮换：使用登录状态 state/aicaic-1.json`、步骤 0→1→2 全过、解析 30 条、去重跳过已有商品、发现新商品并提交后台分析 | **0** ✅ |
+
+收尾检查：`logs/task-failure-guard.json` 不存在（干净）、容器 `Status=running | RestartCount=0`、两个 spider 进程仍在正常翻页采集。
+
+### 阶段 D：文档与仓库同步
+
+- 教程 `闲鱼监控保姆级实操教程_全量修正版.md`：新增 **3.6「闲鱼登录好了但 state 没更新」**（三条诊断命令）；4.3 步骤改为「终端按两次 Enter + 必须看到 ✅ 登录态已保存」；速查表加「确认登录态是否已保存」「登录成功但 state 没更新」两行。
+- 本存档追加轮次 21、22，经验沉淀补第 12 条。
+- 推送到 `fork`(chenxj130) master。
+
+---
+
 ## 经验沉淀（可复用）
 
 1. **Xvfb 保活**：无头浏览器项目必须把虚拟显示器做成守护（崩了自动重启），否则子进程必崩。根治方案 `start_xvfb_guard.sh` + compose `command` 引用脚本。
@@ -524,12 +643,13 @@ cd /Users/zhaoshuixian/Documents/GitHub/ai-goofish-monitor && .venv/bin/python c
 9. **聊天存档格式**：用户指令 1:1 复刻（引用块）+ 轮次结构，便于后期提示词优化（全局规则）。
 10. **登录态更新后必须清熔断 + 重启容器**：只更新 `state/aicaic-1.json` 不够，已被 FailureGuard 熔断的任务会直接返回 500，UI 仍报「启动任务失败」。
 11. **本地脚本必须用项目 venv**：WorkBuddy 内置 Python 升级会清空 site-packages，导致 `ModuleNotFoundError: No module named 'playwright'` 反复出现。用项目 `.venv` + 锁定 `playwright==1.59.0`（与容器对齐）根治；脚本用 `channel="chrome"` 无需 `playwright install`。
+12. **「登录好了」必须先验证 state mtime，不能直接部署**：v7 有两个 `input()` 阻塞点（第 193 行进阶段 B、第 251 行保存），写文件在第 272 行。浏览器里短信登录成功 ≠ 保存成功；只登录不按 Enter，state 仍是旧日期。AI 收到「登录好了」时应先 `ls -la state/aicaic-1.json` + `pgrep -fl capture_login.py` + 查副本 Cookies 时间戳三条交叉验证，再决定部署，避免把登录态过期误判成新故障、或触发无谓的 FailureGuard 熔断。
 
 ---
 
 ## 待办
 
 - [ ] Cloudflare 公网部署（待注册域名）
-- [ ] 登录态约 7~30 天过期，届时重跑 `.venv/bin/python capture_login.py`（v7），跑完**必须**清熔断 + 重启容器 + 验证
+- [ ] 登录态约 7~30 天过期，届时重跑 `.venv/bin/python capture_login.py`（v7）：**在终端按两次 Enter + 看到 `✅ 登录态已保存!`**，跑完**必须**清熔断 + 重启容器 + 验证
 
 （完）
