@@ -446,6 +446,71 @@ docker exec -w /app -e DISPLAY=:99 -d ai-goofish-monitor-app bash -c \
 
 ---
 
+## 轮次 20 ｜ 用户
+
+（附完整终端报错：按上轮给出的命令运行 `capture_login.py` 后，导入 playwright 失败）
+
+> Last login: Thu Nov 12 13:03:51 on ttys002
+> (base) zhaoshuixian@NARCISSZHAO-MB0 ~ % cd /Users/zhaoshuixian/Documents/GitHub/ai-goofish-monitor && /Users/zhaoshuixian/.workbuddy/binaries/python/versions/3.13.12/bin/python3 capture_login.py
+> Traceback (most recent call last):
+> File "/Users/zhaoshuixian/Documents/GitHub/ai-goofish-monitor/capture_login.py", line 34, in <module>
+> from playwright.sync_api import sync_playwright
+> ModuleNotFoundError: No module named 'playwright'
+> (base) zhaoshuixian@NARCISSZHAO-MB0 ai-goofish-monitor %
+
+## 轮次 20 ｜ 助手
+
+### 阶段 A：根因诊断
+
+逐个探测本机 Python 解释器，全部没有 playwright：
+
+```
+/Users/.../3.13.12/bin/python3  ❌ 无   （WorkBuddy 内置，8 月能跑，本次重建后包丢失）
+/opt/homebrew/bin/python3       ❌ 无
+/usr/bin/python3                ❌ 无
+~/miniconda3/bin/python3        ❌ 无
+```
+
+结论：不是脚本坏了，是**解释器环境漂移**——WorkBuddy 内置 Python 升级/重建会清空 site-packages。8 月用的是同一个解释器，当时装过 playwright。
+
+### 阶段 B：方案选择（不装回内置 Python）
+
+把包装回 WorkBuddy 内置 Python 能立刻修好，但下次平台升级会再犯。改为建**项目本地 `.venv`**，版本对齐容器内 `playwright 1.59.0`：
+
+```bash
+cd /Users/zhaoshuixian/Documents/GitHub/ai-goofish-monitor
+/Users/zhaoshuixian/.workbuddy/binaries/python/versions/3.13.12/bin/python3 -m venv .venv
+.venv/bin/pip install playwright==1.59.0
+```
+
+前置条件核对：系统 Chrome 存在、Chrome `Profile 5` 存在、pip 26.0 可用；脚本用 `channel="chrome"` 调系统 Chrome，**无需** `playwright install` 下载内置浏览器。
+
+### 阶段 C：验证证据
+
+```
+playwright 版本: 1.59.0              （与容器一致 ✅）
+driver 已启动 ✅
+headless 启动系统 Chrome ✅  UA: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/
+capture_login.py 语法检查通过 ✅
+```
+
+### 阶段 D：文档与仓库同步
+
+- `.gitignore` 新增 `.venv/`（venv 不入库）。
+- `capture_login.py` 顶部用法注释改为 `.venv/bin/python capture_login.py`，并附首次初始化命令。
+- `闲鱼监控保姆级实操教程_全量修正版.md` 三处旧命令（第 1 节环境准备 / 4.3 操作步骤 / 第 5 节速查表）全部改为 venv 命令，并加 `ModuleNotFoundError` 排错提示。
+- 推送到 `fork`(chenxj130) master。
+
+### 阶段 E：给用户的正确命令
+
+```bash
+cd /Users/zhaoshuixian/Documents/GitHub/ai-goofish-monitor && .venv/bin/python capture_login.py
+```
+
+登录成功后按 Enter 保存，再清熔断 + 重启容器 + 验证两任务。
+
+---
+
 ## 经验沉淀（可复用）
 
 1. **Xvfb 保活**：无头浏览器项目必须把虚拟显示器做成守护（崩了自动重启），否则子进程必崩。根治方案 `start_xvfb_guard.sh` + compose `command` 引用脚本。
@@ -458,12 +523,13 @@ docker exec -w /app -e DISPLAY=:99 -d ai-goofish-monitor-app bash -c \
 8. **cookie 解密**：macOS Chrome cookie 用 Keychain 加密，Python 直接读易失败；让**真实 Chrome 浏览器**自己加载最稳。
 9. **聊天存档格式**：用户指令 1:1 复刻（引用块）+ 轮次结构，便于后期提示词优化（全局规则）。
 10. **登录态更新后必须清熔断 + 重启容器**：只更新 `state/aicaic-1.json` 不够，已被 FailureGuard 熔断的任务会直接返回 500，UI 仍报「启动任务失败」。
+11. **本地脚本必须用项目 venv**：WorkBuddy 内置 Python 升级会清空 site-packages，导致 `ModuleNotFoundError: No module named 'playwright'` 反复出现。用项目 `.venv` + 锁定 `playwright==1.59.0`（与容器对齐）根治；脚本用 `channel="chrome"` 无需 `playwright install`。
 
 ---
 
 ## 待办
 
 - [ ] Cloudflare 公网部署（待注册域名）
-- [ ] 登录态约 7~30 天过期，届时重跑 `python3 capture_login.py`（v7），跑完**必须**清熔断 + 重启容器 + 验证
+- [ ] 登录态约 7~30 天过期，届时重跑 `.venv/bin/python capture_login.py`（v7），跑完**必须**清熔断 + 重启容器 + 验证
 
 （完）

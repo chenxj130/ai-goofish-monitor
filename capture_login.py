@@ -23,9 +23,16 @@ v7 的突破思路（两阶段）：
     · 服务端收到「已有 cookie + 移动端 UA」→ 建立 mobile session
     · 保存此时的 storage_state → 就是 spider 可用的移动端登录态
 
-用法:
+用法（必须用项目 venv；系统 python3 / WorkBuddy 内置 python3 都不带 playwright）:
   cd /Users/zhaoshuixian/Documents/GitHub/ai-goofish-monitor
-  python3 capture_login.py
+  .venv/bin/python capture_login.py
+
+首次初始化（若 .venv 不存在，版本 1.59.0 与容器内对齐）:
+  /Users/zhaoshuixian/.workbuddy/binaries/python/versions/3.13.12/bin/python3 -m venv .venv
+  .venv/bin/pip install playwright==1.59.0
+
+注意: 本脚本用 channel="chrome" 调用系统已安装的 Chrome，
+      不需要执行 `playwright install` 下载内置浏览器。
 """
 import json
 import os
